@@ -36,6 +36,7 @@ import android.util.Log;
 import android.widget.FrameLayout;
 import android.text.TextUtils;
 import android.opengl.GLSurfaceView;
+import android.os.AsyncTask;
 
 import fr.hyperfiction.Base64;
 
@@ -45,9 +46,9 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.List;
 
-import org.haxe.nme.GameActivity;
-import org.haxe.nme.HaxeObject;
-import org.haxe.nme.NME;
+import org.haxe.lime.GameActivity;
+import org.haxe.lime.HaxeObject;
+import org.haxe.lime.Lime;
 
 import ::APP_PACKAGE::.R;
 
@@ -59,7 +60,7 @@ public class HypFacebook {
 
 	static public native void onFBEvent( String jsEvName , String javaArg1 , String javaArg2 );
 	static{
-		System.loadLibrary( "HypFacebook" );
+		System.loadLibrary( "hypfacebook" );
 	}
 
 	private String _sAppID;
@@ -89,7 +90,6 @@ public class HypFacebook {
 		* @return	void
 		*/
 		public HypFacebook( String sAppID ){
-			trace("constructor ::: "+sAppID);
 			_sAppID = sAppID;
 			_mSurface = (GLSurfaceView) GameActivity.getInstance().getCurrentFocus();
 	}
@@ -114,22 +114,38 @@ public class HypFacebook {
 		*/
 		public boolean connect( boolean allowUI ){
 			Session session = _createSession( );
-			trace( "Session state: "+session.getState( ) );
+			
 			if ( session.isOpened( ) ) {
 				return true;
 			}
+			
 			Session.OpenRequest req = _createOpenRequest( session );
 			if ( SessionState.CREATED_TOKEN_LOADED.equals(session.getState()) || ( allowUI && !SessionState.OPENING.equals(session.getState()) ) ) {
 				try{
+				
 					session.openForRead( req );
 				} catch( Exception e) {
-					trace( "Exception in openForRead");
+				
 					e.printStackTrace();
 				}
 				return session.isOpened( );
 			} else {
+			
 				return false;
 			}
+		}
+		
+		public static String get_token() {
+			
+			Session session = Session.getActiveSession( );
+			String token = null; 
+			if ( session != null ) 
+				if ( session.isOpened( ) ) {
+					token = session.getAccessToken( );
+				}
+			
+			return token;
+			
 		}
 
 		public boolean connectForPublish( boolean allowUI, String sPerms )  {
@@ -194,8 +210,7 @@ public class HypFacebook {
 		* @return	void
 		*/
 		public void show_dialog( final String sAction , String sKeys , String sVals ){
-			trace("sKeys ::: "+sKeys);
-			trace("sVals ::: "+sVals);
+
 
 			String[] aKeys = sKeys.split("&");
 			String[] aVals = sVals.split("&");
@@ -204,7 +219,7 @@ public class HypFacebook {
 				final Bundle params = new Bundle( );
 
 				for( int i = 0 ; i < aKeys.length ; i++ ){
-					trace("---"+i);
+				
 					params.putString( aKeys[ i ] , aVals[ i ] );
 				}
 
@@ -233,19 +248,20 @@ public class HypFacebook {
 		* @return	void
 		*/
 		public void graph_request( String sGraphRequest , String sKeys , String sVals , String sMethod ){
-			trace("graph_request ::: "+sMethod);
+		
 			Bundle params = stringTo_bundle( sKeys , sVals );
 
 			final Request req	 = new Request( Session.getActiveSession( ) , sGraphRequest , params , HttpMethod.valueOf( sMethod ) , listener_request );
-			GameActivity.getInstance( ).runOnUiThread(
-				new Runnable() {
+            //make sure this doesn't run on the UIThread
+            new Thread(new Runnable() {
 					@Override
 					public void run() {
 						trace( "sync request...");
 						req.executeAndWait();
 					}
 				}
-			);
+			).start();
+
 		}
 
 		/**
@@ -255,7 +271,7 @@ public class HypFacebook {
 		* @return	void
 		*/
 		private Bundle stringTo_bundle( String sKeys , String sVals ){
-			trace("stringTo_bundle");
+			
 
 			//
 				String[] aKeys = sKeys.split("&");
@@ -265,8 +281,7 @@ public class HypFacebook {
 				Bundle params = new Bundle( );
 
 				for( int i = 0 ; i < aKeys.length ; i++ ){
-					trace("---"+i);
-					trace( aKeys[ i ]+" = "+aVals[ i ] );
+			
 					params.putString( aKeys[ i ] , aVals[ i ] );
 				}
 
@@ -425,15 +440,21 @@ public class HypFacebook {
 
 						@Override
 			public void onComplete(Bundle values, FacebookException error) {
-				trace("onComplete");
+				
 				if( error != null ){
 					onFBEventWrapper( DIALOG_ERROR , error.toString( ) , "" );
 				}else{
 					final String postId = values.getString("post_id");
-					if ( postId != null )
+					if ( postId != null ) {
 						onFBEventWrapper( DIALOG_SENT , postId , "" );
-					else
-						onFBEventWrapper( DIALOG_CANCELED , "" , "" );
+					} else {
+						final String requestId = values.getString("request");
+						if ( requestId != null ) {
+							onFBEventWrapper( DIALOG_SENT , requestId , "" );
+						} else {
+							onFBEventWrapper( DIALOG_CANCELED , "" , "" );
+						}
+					}
 				}
 			}
 		};
@@ -447,7 +468,7 @@ public class HypFacebook {
 
 				FacebookRequestError error = response.getError( );
 				if( error != null ){
-					trace( "error : "+error );
+			
 					onFBEventWrapper(GRAPH_REQUEST_ERROR , sGraphPath , error.toString( ) );
 				}else{
 					onFBEventWrapper( GRAPH_REQUEST_RESULTS , sGraphPath , response.getGraphObject( ).getInnerJSONObject().toString() );
